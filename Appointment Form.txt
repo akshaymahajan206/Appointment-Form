@@ -1,0 +1,171 @@
+------Apex--------------
+public class AppointmentController {
+@AuraEnabled(cacheable=true)
+    public static List<Appointment_Slots__c> getActiveAppointmentSlots() {
+        return [SELECT Id, Appointment_Date__c, Start_Time__c, End_Time__c 
+                FROM Appointment_Slots__c 
+                WHERE isActive__c = TRUE];
+    }
+
+    @AuraEnabled(cacheable=true)
+    public static List<Contact> getContacts(){
+        return [SELECT Id, Name FROM Contact];
+    }
+
+    @AuraEnabled
+    public static void saveAppointmentDetails(Appointment_Details__c appointment) {
+        insert appointment;
+    }
+}
+--------------HTML----------------------
+<template>
+    <lightning-card title="Appointment Form">
+        <div class="slds-m-around_medium">
+            <lightning-combobox
+                name="Contact"
+                label="Contact"
+                value={selectedContact}
+                options={contactOptions}
+                onchange={handleContactChange}>
+            </lightning-combobox>
+
+            <lightning-input type="text" label="Subject" value={subject} 
+                             onchange={handleSubjectChange} required></lightning-input>
+
+            <lightning-input type="date" label="Appointment Date" 
+                             value={appointmentDate} onchange={handleDateChange} required></lightning-input>
+
+            <lightning-input type="time" label="Appointment Time" 
+                             value={appointmentTime} onchange={handleTimeChange} required></lightning-input>
+
+            <lightning-textarea label="Description" value={description} 
+                                 onchange={handleDescriptionChange} required></lightning-textarea>
+
+            <lightning-button variant="brand" label="Submit" onclick={handleSubmit}></lightning-button>
+
+            <template if:true={successMessage}>
+                <div class="slds-text-color_success">{successMessage}</div>
+            </template>
+            <template if:true={errorMessage}>
+                <div class="slds-text-color_error">{errorMessage}</div>
+            </template>
+        </div>
+    </lightning-card>
+</template>
+
+-----------------------JS------------------------
+import { LightningElement, track, wire } from 'lwc';
+import getActiveAppointmentSlots from '@salesforce/apex/AppointmentController.getActiveAppointmentSlots';
+import saveAppointmentDetails from '@salesforce/apex/AppointmentController.saveAppointmentDetails';
+import getContacts from '@salesforce/apex/AppointmentController.getContacts';
+
+
+export default class AppointmentForm extends LightningElement {
+    @track selectedContact;
+    @track subject;
+    @track appointmentDate;
+    @track contactOptions = [];
+    @track appointmentTime;
+    @track description;
+    @track successMessage;
+    @track errorMessage;
+    activeSlots = [];
+
+    @wire(getActiveAppointmentSlots)
+    wiredActiveSlots({ error, data }) {
+        if (data) {
+            this.activeSlots = data;
+        } else if (error) {
+            console.error('Error fetching appointment slots', error);
+        }
+    }
+
+    @wire(getContacts)
+    wiredContacts({ error, data }) {
+        if (data) {
+            this.contactOptions = data.map(contact => ({
+                label: contact.Name,
+                value: contact.Id
+            }));
+        } else if (error) {
+            console.error('Error fetching contacts', error);
+        }
+    }
+
+    handleContactChange(event) {
+        this.selectedContact = event.detail.value;
+    }
+
+    handleSubjectChange(event) {
+        this.subject = event.detail.value;
+    }
+
+    handleDateChange(event) {
+        this.appointmentDate = event.detail.value;
+    }
+
+    handleTimeChange(event) {
+        this.appointmentTime = event.detail.value;
+    }
+
+    handleDescriptionChange(event) {
+        this.description = event.detail.value;
+    }
+
+    validateFields() {
+        return this.selectedContact && this.subject && this.appointmentDate && 
+               this.appointmentTime && this.description;
+    }
+
+    isTimeSlotAvailable() {
+        const selectedDateTime = new Date(`${this.appointmentDate}T${this.appointmentTime}`);
+        for (let slot of this.activeSlots) {
+            const startTime = new Date(slot.Appointment_Date__c + 'T' + slot.Start_Time__c);
+            const endTime = new Date(slot.Appointment_Date__c + 'T' + slot.End_Time__c);
+            if (selectedDateTime >= startTime && selectedDateTime <= endTime) {
+                return true; // Valid slot
+            }
+        }
+        return false; // No valid slot found
+    }
+
+    async handleSubmit() {
+        if (this.validateFields()) {
+            if (!this.isTimeSlotAvailable()) {
+                this.errorMessage = 'Selected time does not fall within available appointment slots!';
+                this.successMessage = '';
+                return;
+            }
+
+            try {
+                const appointmentDetails = {
+                    Contact__c: this.selectedContact,
+                    Subject__c: this.subject,
+                    Appointment_Date__c: this.appointmentDate,
+                    Appointment_Time__c: this.appointmentTime,
+                    Description__c: this.description,
+                };
+
+                await saveAppointmentDetails({ appointment: appointmentDetails });
+                this.successMessage = 'Appointment saved successfully!';
+                this.errorMessage = '';
+                this.clearFields();
+            } catch (error) {
+                this.errorMessage = 'Error saving appointment: ' + error.body.message;
+                this.successMessage = '';
+            }
+        } else {
+            this.errorMessage = 'All fields are required!';
+            this.successMessage = '';
+        }
+    }
+
+    clearFields() {
+        this.selectedContact = '';
+        this.subject = '';
+        this.appointmentDate = '';
+        this.appointmentTime = '';
+        this.description = '';
+    }
+}
+
